@@ -13,7 +13,7 @@
     "build": "wrangler deploy --dry-run",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
-    "lint": "eslint .",
+    "lint": "wrangler types > /dev/null && eslint .",
     "typecheck": "wrangler types > /dev/null && tsc --noEmit",
     "format": "dprint fmt",
     "format:check": "dprint check",
