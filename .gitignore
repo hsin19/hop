@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+*.junit.xml
+
+.wrangler
+worker-configuration.d.ts
+.dev.vars
+
+.DS_Store
+*.log

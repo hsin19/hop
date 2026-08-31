@@ -1,0 +1,59 @@
+{
+  "name": "hop",
+  "version": "1.0.0",
+  "description": "Short links and end-to-end encrypted blob relay on Cloudflare Workers.",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types",
+    "lint": "eslint .",
+    "typecheck": "wrangler types > /dev/null && tsc --noEmit",
+    "format": "dprint fmt",
+    "format:check": "dprint check",
+    "test": "vitest run",
+    "test:ci": "vitest run --coverage --reporter=default --reporter=github-actions --reporter=junit --outputFile.junit=test-report.junit.xml",
+    "check": "pnpm run format && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "dependencies": {
+    "hono": "^4.13.5",
+    "nanoid": "^6.0.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.4.0",
+    "@vitest/coverage-istanbul": "~4.1.11",
+    "dprint": "^0.56.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "lint-staged": "^17.4.1",
+    "simple-git-hooks": "^2.14.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "~4.1.11",
+    "wrangler": "^4.127.1"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm exec lint-staged"
+  },
+  "lint-staged": {
+    "*": "dprint fmt --allow-no-files",
+    "*.{js,ts}": "eslint --fix"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hsin19/hop.git"
+  },
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hsin19/hop/issues"
+  },
+  "homepage": "https://github.com/hsin19/hop#readme"
+}

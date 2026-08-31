@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hop",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // No nodejs_compat: Hono and nanoid v5 are pure Web Standard APIs. Adding the
+  // compat layer only costs bundle size and cold-start time here.
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "routes": [
+    { "pattern": "hop.hsin19.com", "custom_domain": true }
+  ],
+  "kv_namespaces": [
+    { "binding": "HOP_KV", "id": "YOUR_KV_NAMESPACE_ID" }
+  ],
+  "vars": {
+    // Browsers may only POST ciphertext from these origins. Not a security
+    // boundary (curl ignores CORS) — the real limits are the WAF rate-limit rule
+    // and MAX_PAYLOAD_CHARS. show-me-way's dev server is 8045, its preview 8046.
+    "ALLOWED_ORIGINS": "https://trip.hsin19.com,http://localhost:8045,http://localhost:8046"
+  }
+  // Secrets (wrangler secret put), never in this file:
+  //   ADMIN_SECRET     - bearer token for /api/v1/links and DELETE
+  //   TURNSTILE_SECRET - optional; when absent the Turnstile check is skipped
+}
