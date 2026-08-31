@@ -1,10 +1,16 @@
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
+import { clientIp } from "./lib/client-ip";
 import {
+    generateId,
     generateOwnerToken,
-    generateUniqueId,
 } from "./lib/id";
+import type { EntryStore } from "./lib/store";
+import {
+    claimKey,
+    cloudflareKv,
+} from "./lib/store";
 import { verifyTurnstile } from "./lib/turnstile";
 import type {
     Bindings,
@@ -27,7 +33,22 @@ const MAX_PAYLOAD_CHARS = 64_000;
 const MAX_LINK_CHARS = 2_048;
 const MAX_ID_CHARS = 64;
 
-const app = new Hono<{ Bindings: Bindings; }>();
+/** Handlers read storage off the context, so none of them names a Cloudflare type. */
+type AppEnv = {
+    Bindings: Bindings;
+    Variables: { store: EntryStore; };
+};
+
+const entryKey = (id: string) => `entry:${id}`;
+
+const app = new Hono<AppEnv>();
+
+// The one line in the request path that knows which platform this is running on.
+// Porting hop means swapping the adapter here; nothing downstream changes.
+app.use("*", async (c, next) => {
+    c.set("store", cloudflareKv(c.env.HOP_KV));
+    await next();
+});
 
 app.use("*", async (c, next) => {
     const allowed = c.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()).filter(Boolean);
@@ -53,7 +74,25 @@ app.get("/health", c =>
     }));
 
 /**
- * Hash before comparing: timingSafeEqual needs equal-length inputs, and feeding it
+ * Constant-time buffer comparison over standard WebCrypto only.
+ *
+ * workerd offers crypto.subtle.timingSafeEqual, but that is a Cloudflare extension
+ * rather than part of the spec — it would vanish silently on Node or Deno, and the
+ * breakage would surface at runtime on the admin auth path. The loop below never
+ * exits early, so it leaks nothing beyond the length, and callers hash first so the
+ * length is a constant 32 bytes anyway.
+ */
+function constantTimeEqual(a: ArrayBuffer, b: ArrayBuffer): boolean {
+    const x = new Uint8Array(a);
+    const y = new Uint8Array(b);
+    if (x.length !== y.length) return false;
+    let diff = 0;
+    for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+    return diff === 0;
+}
+
+/**
+ * Hash before comparing: the comparison needs equal-length inputs, and feeding it
  * the raw tokens would leak the secret's length through the length check.
  */
 async function secretMatches(provided: string, expected: string): Promise<boolean> {
@@ -63,10 +102,10 @@ async function secretMatches(provided: string, expected: string): Promise<boolea
         crypto.subtle.digest("SHA-256", encoder.encode(provided)),
         crypto.subtle.digest("SHA-256", encoder.encode(expected)),
     ]);
-    return crypto.subtle.timingSafeEqual(a, b);
+    return constantTimeEqual(a, b);
 }
 
-const requireAdmin: MiddlewareHandler<{ Bindings: Bindings; }> = async (c, next) => {
+const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
     const auth = c.req.header("Authorization") ?? "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
     if (!await secretMatches(token, c.env.ADMIN_SECRET)) {
@@ -80,9 +119,9 @@ const requireAdmin: MiddlewareHandler<{ Bindings: Bindings; }> = async (c, next)
  * must not disagree here — one of them returning an unhandled 500 on bad JSON is
  * exactly the bug this shared helper exists to prevent.
  */
-async function readRecord(kv: KVNamespace, id: string | undefined): Promise<EntryRecord | null> {
+async function readRecord(store: EntryStore, id: string | undefined): Promise<EntryRecord | null> {
     if (!id || id.length > MAX_ID_CHARS) return null;
-    const raw = await kv.get(`entry:${id}`);
+    const raw = await store.get(entryKey(id));
     if (!raw) return null;
     try {
         return JSON.parse(raw) as EntryRecord;
@@ -102,26 +141,38 @@ function clampTtl(raw: unknown, fallback: number): number {
     return Math.max(MIN_TTL, Math.min(MAX_TTL, Math.floor(raw)));
 }
 
+/**
+ * Generate an id and claim it in one step, retrying on collision.
+ *
+ * Generating and writing are adjacent on purpose: an id that is checked for
+ * freshness in one place and written in another leaves a wider window for two
+ * writers to pick the same one, and losing that race silently overwrites somebody
+ * else's entry. How narrow the window actually gets is up to the store — see
+ * claimKey.
+ */
 async function putEntry(
-    kv: KVNamespace,
+    store: EntryStore,
     kind: EntryKind,
     payload: string,
     ttl: number,
     meta: Record<string, unknown>,
 ): Promise<EntryRecord> {
-    const id = await generateUniqueId(kv);
-    const now = Date.now();
-    const record: EntryRecord = {
-        id,
-        kind,
-        payload,
-        ownerToken: generateOwnerToken(),
-        meta,
-        createdAt: now,
-        expiresAt: now + ttl * 1000,
-    };
-    await kv.put(`entry:${id}`, JSON.stringify(record), { expirationTtl: ttl });
-    return record;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const now = Date.now();
+        const record: EntryRecord = {
+            id: generateId(),
+            kind,
+            payload,
+            ownerToken: generateOwnerToken(),
+            meta,
+            createdAt: now,
+            expiresAt: now + ttl * 1000,
+        };
+        if (await claimKey(store, entryKey(record.id), JSON.stringify(record), ttl)) {
+            return record;
+        }
+    }
+    throw new Error("Failed to generate a unique id");
 }
 
 // Anonymous ciphertext drop. The body is the payload itself as text/plain: JSON
@@ -131,7 +182,7 @@ app.post("/api/v1/blobs", async c => {
     const ok = await verifyTurnstile(
         c.env.TURNSTILE_SECRET,
         c.req.header("CF-Turnstile-Token") ?? "",
-        c.req.header("CF-Connecting-IP"),
+        clientIp(c.req.raw.headers),
     );
     if (!ok) return c.json({ error: "Verification failed" }, 403);
 
@@ -142,7 +193,7 @@ app.post("/api/v1/blobs", async c => {
     }
 
     const ttl = clampTtl(Number(c.req.query("ttl")), DEFAULT_BLOB_TTL);
-    const record = await putEntry(c.env.HOP_KV, "blob", payload, ttl, {});
+    const record = await putEntry(c.get("store"), "blob", payload, ttl, {});
 
     return c.json({
         id: record.id,
@@ -154,7 +205,7 @@ app.post("/api/v1/blobs", async c => {
 });
 
 app.get("/api/v1/blobs/:id", async c => {
-    const record = await readRecord(c.env.HOP_KV, c.req.param("id"));
+    const record = await readRecord(c.get("store"), c.req.param("id"));
     if (!record || record.kind !== "blob") {
         return c.json({ error: "Not found or expired" }, 404);
     }
@@ -182,7 +233,7 @@ app.post("/api/v1/links", requireAdmin, async c => {
 
     const ttl = clampTtl(body.ttl, DEFAULT_LINK_TTL);
     const meta = body.meta && typeof body.meta === "object" ? body.meta as Record<string, unknown> : {};
-    const record = await putEntry(c.env.HOP_KV, "link", url, ttl, meta);
+    const record = await putEntry(c.get("store"), "link", url, ttl, meta);
 
     return c.json({
         id: record.id,
@@ -196,7 +247,7 @@ app.post("/api/v1/links", requireAdmin, async c => {
 app.delete("/api/v1/entries/:id", requireAdmin, async c => {
     const id = c.req.param("id");
     if (!id || id.length > MAX_ID_CHARS) return c.json({ error: "Invalid id" }, 400);
-    await c.env.HOP_KV.delete(`entry:${id}`);
+    await c.get("store").delete(entryKey(id));
     return c.body(null, 204);
 });
 
@@ -204,7 +255,7 @@ app.delete("/api/v1/entries/:id", requireAdmin, async c => {
 // so an anonymous blob whose plaintext happens to look like a URL can never turn
 // this domain into an open redirect.
 app.get("/:code", async c => {
-    const record = await readRecord(c.env.HOP_KV, c.req.param("code"));
+    const record = await readRecord(c.get("store"), c.req.param("code"));
     if (!record) return c.json({ error: "Not found or expired" }, 404);
 
     if (record.kind === "link") return c.redirect(record.payload, 302);

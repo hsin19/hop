@@ -22,7 +22,10 @@ export async function verifyTurnstile(
 
     try {
         const res = await fetch(SITEVERIFY, { method: "POST", body: form });
-        const data = await res.json<{ success?: boolean; }>();
+        // Annotated rather than res.json<T>(): that generic is a Cloudflare types
+        // extension. Standard Response.json() returns any, which this annotation
+        // narrows just as well, so the line compiles on and off platform alike.
+        const data: { success?: boolean; } = await res.json();
         return data.success === true;
     } catch {
         // Fail closed: an unreachable siteverify means we cannot tell a human from a

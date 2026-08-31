@@ -15,6 +15,11 @@ export type EntryKind = "blob" | "link";
  * missing, and TURNSTILE_SECRET's optionality is load-bearing (see verifyTurnstile).
  */
 export type Bindings = {
+    /**
+     * The raw platform binding. Nothing outside the cloudflareKv adapter should touch
+     * it — handlers take an EntryStore, so this stays the narrow seam where hop knows
+     * which vendor it is deployed on.
+     */
     HOP_KV: KVNamespace;
     ALLOWED_ORIGINS: string;
     ADMIN_SECRET: string;
