@@ -77,12 +77,23 @@ jobs:
         env:
           ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
 
+      # wrangler-action reports a custom-domain deploy as `hop.hsin19.com (custom
+      # domain)` -- a label, not a URL -- so the host has to be taken off the front
+      # and given a scheme. Feeding the raw output to curl rejects it outright, and
+      # every retry then fails identically, which reads like a propagation delay
+      # instead of the malformed URL it actually is. A workers.dev deploy returns a
+      # real URL, hence the scheme check rather than an unconditional prefix.
       - name: Smoke check deployed Worker
         run: |
-          url="${{ steps.deploy.outputs.deployment-url }}"
-          if [ -z "$url" ]; then
+          raw="${{ steps.deploy.outputs.deployment-url }}"
+          host="${raw%% *}"
+          if [ -z "$host" ]; then
             echo "::warning::No deployment URL returned — skipping health smoke check"
             exit 0
           fi
+          case "$host" in
+            http://*|https://*) url="$host" ;;
+            *) url="https://$host" ;;
+          esac
           echo "Probing $url/health"
           curl -fsS --retry 5 --retry-all-errors --retry-delay 3 "$url/health" | grep -q '"status":"ok"'
