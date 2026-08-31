@@ -76,20 +76,33 @@ pnpm run check    # format, lint, typecheck, test, build — run this before pus
 One-time, per environment:
 
 1. `wrangler kv namespace create HOP_KV`, then put the id into `wrangler.jsonc`.
-2. `wrangler secret put ADMIN_SECRET`
+2. `ADMIN_SECRET` — the bearer token guarding `POST /api/v1/links` and
+   `DELETE /api/v1/entries/:id`. Generate one (`openssl rand -base64 32`) and store
+   it in **Actions** secrets (step 5), not on the Worker: `deploy.yml` hands it to
+   `wrangler-action`, which pushes it on every deploy, so the repo secret is the
+   source of truth and setting it anywhere else just gets overwritten.
+   `wrangler secret put ADMIN_SECRET` is for deploying by hand from a local
+   checkout instead — and it cannot run before the Worker exists at all.
 3. Bind the custom domain: Workers → Settings → Domains & Routes → `hop.hsin19.com`.
 4. Add a WAF rate-limiting rule — this, not Turnstile, is the first line of defence
    for the anonymous write path:
    - Expression: `http.request.uri.path eq "/api/v1/blobs" and http.request.method eq "POST"`
    - Limit: 10 requests per minute per IP
-5. Repo settings: `secrets.CLOUDFLARE_API_TOKEN`, `secrets.ADMIN_SECRET`, and
-   `vars.CLOUDFLARE_ACCOUNT_ID` (an account id is not a secret, matching the other
-   repos here).
+5. Repo settings → Secrets and variables:
+   - **Actions**: `secrets.CLOUDFLARE_API_TOKEN`, `secrets.ADMIN_SECRET`,
+     `secrets.CODECOV_TOKEN`, and `vars.CLOUDFLARE_ACCOUNT_ID` (an account id is
+     not a secret, matching the other repos here).
+   - **Dependabot**: `AUTOMERGE_TOKEN`, and `JULES_API_KEY` if the auto-repair job
+     is wanted. These must live in the Dependabot store, not Actions — a
+     Dependabot-triggered run sees only that one. See
+     [`.github/workflows/README.md`](.github/workflows/README.md).
 
 `TURNSTILE_SECRET` is deliberately unset. `verifyTurnstile` waves requests through
 when it is absent, so turning the challenge on is `wrangler secret put
-TURNSTILE_SECRET` and nothing else. Leave it off until abuse justifies putting a
-challenge in front of a share button.
+TURNSTILE_SECRET` and nothing else — and unlike `ADMIN_SECRET` it is absent from
+`deploy.yml`'s secret list, so a deploy neither sets nor clears it and the value
+survives. Leave it off until abuse justifies putting a challenge in front of a
+share button.
 
 ## Conventions
 

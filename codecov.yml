@@ -1,0 +1,22 @@
+# Scope is set in `vitest.config.ts` (`coverage.include: src/**/*.ts`), and for this
+# service that glob is already the whole story: every file under `src/` is real
+# TypeScript that runs, so there is no counterpart to a component layer that would
+# need excluding. Hence no `ignore:` list here -- an empty one would just be dead
+# config that later drifts out of step with what the glob actually measures.
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+
+# `require_changes: true` because most PRs here move no covered line at all: a
+# Dependabot bump touches only package.json and the lockfile. An empty comment on a
+# PR that auto-merges is pure noise -- the status check still runs either way.
+comment:
+  layout: 'condensed_header, files'
+  require_changes: true

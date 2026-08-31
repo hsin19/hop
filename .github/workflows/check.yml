@@ -1,0 +1,97 @@
+name: Check
+
+# The single definition of "did this tree pass" -- the same set `pnpm run check`
+# covers locally. Called by pr.yml for a pull request and by deploy.yml before it
+# ships, so the two cannot drift, which they did when each spelled the list out for
+# itself. workflow_dispatch lives here rather than on a caller: "run every check
+# against this ref" is this workflow's job, not the PR pipeline's.
+on:
+  workflow_call:
+    secrets:
+      CODECOV_TOKEN:
+        # Absent on a Dependabot PR, which reads the Dependabot secret store rather
+        # than the Actions one. The Codecov uploads no-op instead of failing.
+        required: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # pnpm version comes from package.json's packageManager field
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+
+      # dprint compiles its wasm plugins on first use; without this every run pays
+      # for all seven of them before the first file is formatted.
+      - name: Cache dprint plugins
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/dprint
+          key: dprint-${{ runner.os }}-${{ hashFiles('.dprint.jsonc') }}
+
+      - name: Install dependencies
+        id: install
+        run: pnpm install --frozen-lockfile
+
+      # One step per check rather than one chained command: a single step could only
+      # say "something failed", while the red step here names it. `!cancelled()` so
+      # a single run reports ALL the failures instead of stopping at the first --
+      # the jules-fix job repairing a Dependabot PR needs the whole picture, not one
+      # symptom per round. Gated on the install too, or a bad lockfile (a common
+      # Dependabot failure) reds every step below it for want of node_modules and
+      # buries the one real cause.
+      - name: Format
+        run: pnpm run format:check
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm run lint
+
+      - name: Typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm run test:ci
+
+      # `wrangler deploy --dry-run`: bundles and validates wrangler.jsonc without
+      # touching the account, so it is a check rather than a deploy step.
+      - name: Build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm run build
+
+      # !cancelled() so a `build` failure still ships the coverage the tests already
+      # produced -- on a main run that report is the baseline every later PR is
+      # diffed against, so dropping it would skew the next PR's status.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: coverage
+          fail_ci_if_error: false
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
+          files: test-report.junit.xml
+          fail_ci_if_error: false

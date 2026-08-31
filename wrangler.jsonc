@@ -11,7 +11,7 @@
     { "pattern": "hop.hsin19.com", "custom_domain": true }
   ],
   "kv_namespaces": [
-    { "binding": "HOP_KV", "id": "YOUR_KV_NAMESPACE_ID" }
+    { "binding": "HOP_KV", "id": "4f6834e55ce84a79ab03c563e4d77f1b" }
   ],
   "vars": {
     // Browsers may only POST ciphertext from these origins. Not a security

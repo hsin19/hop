@@ -1,0 +1,60 @@
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+    ignore:
+      # 專案使用 Node 24（LTS），@types/node 跟隨同一個 major，不升到非 LTS 的 25.x
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # typescript-eslint 目前 peer 是 `>=4.8.4 <6.1.0`，載入 TS 7 會直接拋錯讓
+      # lint 整個掛掉——升 major 的 PR 只會是一顆永遠紅的 PR，每週重開一次。
+      # 解除條件：typescript-eslint 支援 TS 7（typescript-eslint#10940）。
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+    groups:
+      hono:
+        patterns:
+          - 'hono'
+      cloudflare:
+        patterns:
+          - 'wrangler'
+          - '@cloudflare/*'
+      vitest:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+      eslint:
+        patterns:
+          - 'eslint'
+          - 'eslint-*'
+          - '@eslint/*'
+          - 'typescript-eslint'
+          - '@typescript-eslint/*'
+      non-major:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - 'cloudflare/wrangler-action'
+      # wrangler-action 只在 push main 的 deploy job 執行，PR 檢查永遠跑不到它，
+      # 升級等於未經驗證直上生產部署——獨立成組，ci.yml 依組名跳過 auto-merge。
+      deploy-actions:
+        patterns:
+          - 'cloudflare/wrangler-action'

@@ -1,0 +1,88 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Deploy-specific permissions are granted only on the deploy job
+permissions:
+  contents: read
+
+# One production deploy at a time. Queued runs collapse to the latest, but an
+# in-flight deploy is never cancelled -- a half-applied Worker upload is worse
+# than a slightly stale one.
+concurrency:
+  group: 'deploy'
+  cancel-in-progress: false
+
+jobs:
+  # Same definition pr.yml gates a PR with, so a direct push to `main` is held to
+  # the same bar -- and its Codecov upload is the baseline every later PR is diffed
+  # against, since this is the only place the suite runs on the default branch.
+  check:
+    uses: ./.github/workflows/check.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # No separate build job: `pnpm run build` is `wrangler deploy --dry-run`, which
+  # check.yml already ran against this exact tree, and wrangler-action builds again
+  # from source anyway. There is nothing to hand between the two.
+  deploy:
+    name: Deploy
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # pnpm version comes from package.json's packageManager field
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # wrangler-action pushes every secret it is given, so an empty value would
+      # silently replace the live ADMIN_SECRET with "" and make every bearer token
+      # match. Refuse the deploy instead.
+      - name: Verify required secrets
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+        run: |
+          if [ -z "$ADMIN_SECRET" ]; then
+            echo "::error::secrets.ADMIN_SECRET is empty — refusing to overwrite the Worker secret"
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare Workers
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: pnpm
+          command: deploy
+          secrets: |
+            ADMIN_SECRET
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+
+      - name: Smoke check deployed Worker
+        run: |
+          url="${{ steps.deploy.outputs.deployment-url }}"
+          if [ -z "$url" ]; then
+            echo "::warning::No deployment URL returned — skipping health smoke check"
+            exit 0
+          fi
+          echo "Probing $url/health"
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 3 "$url/health" | grep -q '"status":"ok"'
