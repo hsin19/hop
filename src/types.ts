@@ -33,11 +33,13 @@ export type EntryRecord = {
     /** blob: base64url(iv ‖ ciphertext). link: an http(s) URL. */
     payload: string;
     /**
-     * Reserved for updatable links: re-uploading to an existing id keeps a printed
-     * QR code pointing at the newest version. Written from the start so adding PUT
-     * later is not a data migration. Nothing verifies it yet.
+     * Bearer secret for `PUT` / `DELETE /api/v1/blobs/:id`, handed to the creator
+     * once as `editToken` and never returned by any read. Optional only because
+     * records written before it existed have none — those can never be updated.
      */
     ownerToken?: string;
+    /** epoch milliseconds; present only once the blob has been re-uploaded via PUT. */
+    updatedAt?: number;
     meta: Record<string, unknown>;
     /** epoch milliseconds — same unit as expiresAt, deliberately. */
     createdAt: number;

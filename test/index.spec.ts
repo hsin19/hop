@@ -17,6 +17,29 @@ function postBlob(payload: string, init: RequestInit = {}) {
     }, env);
 }
 
+function putBlob(id: string, payload: string, auth: string | null, query = "") {
+    return app.request(`/api/v1/blobs/${id}${query}`, {
+        method: "PUT",
+        headers: {
+            "Content-Type": "text/plain",
+            ...(auth ? { Authorization: auth } : {}),
+        },
+        body: payload,
+    }, env);
+}
+
+function deleteBlob(id: string, auth: string | null) {
+    return app.request(`/api/v1/blobs/${id}`, {
+        method: "DELETE",
+        headers: auth ? { Authorization: auth } : {},
+    }, env);
+}
+
+async function createBlob(payload: string) {
+    const body = await (await postBlob(payload)).json<{ id: string; editToken: string; expiresAt: number; }>();
+    return { ...body, auth: `Bearer ${body.editToken}` };
+}
+
 function postLink(body: unknown, auth: string | null = ADMIN) {
     return app.request("/api/v1/links", {
         method: "POST",
@@ -162,9 +185,121 @@ describe("misses", () => {
     it("404s an over-long id instead of hitting KV", async () => {
         expect((await app.request(`/${"a".repeat(200)}`, {}, env)).status).toBe(404);
     });
+});
 
-    it("reports PUT as not implemented so the future API shape is reserved", async () => {
-        const res = await app.request("/api/v1/blobs/abc12345", { method: "PUT", body: "x" }, env);
-        expect(res.status).toBe(501);
+describe("PUT /api/v1/blobs/:id", () => {
+    it("replaces the payload under the same id and stamps updatedAt, leaving createdAt alone", async () => {
+        const { id, auth } = await createBlob("v1");
+        const before = await (await app.request(`/api/v1/blobs/${id}`, {}, env)).json<{ createdAt: number; }>();
+
+        const res = await putBlob(id, "v2", auth);
+        expect(res.status).toBe(200);
+        const body = await res.json<{ id: string; createdAt: number; updatedAt: number; ttl: number; }>();
+        expect(body.id).toBe(id);
+        expect(body.createdAt).toBe(before.createdAt);
+        expect(body.updatedAt).toBeGreaterThanOrEqual(before.createdAt);
+        expect(body.ttl).toBe(90 * 86400);
+
+        const after = await (await app.request(`/api/v1/blobs/${id}`, {}, env)).json<Record<string, unknown>>();
+        expect(after).toMatchObject({ payload: "v2", kind: "blob", createdAt: before.createdAt, updatedAt: body.updatedAt });
+    });
+
+    it("never leaks ownerToken through the update response or the read after it", async () => {
+        const { id, auth } = await createBlob("v1");
+        const res = await putBlob(id, "v2", auth);
+        expect(await res.json()).not.toHaveProperty("ownerToken");
+        expect(await (await app.request(`/api/v1/blobs/${id}`, {}, env)).json()).not.toHaveProperty("ownerToken");
+    });
+
+    it("keeps the same editToken valid across updates", async () => {
+        const { id, auth } = await createBlob("v1");
+        expect((await putBlob(id, "v2", auth)).status).toBe(200);
+        expect((await putBlob(id, "v3", auth)).status).toBe(200);
+        await expect((await app.request(`/api/v1/blobs/${id}`, {}, env)).json()).resolves.toMatchObject({ payload: "v3" });
+    });
+
+    it("rejects a wrong or missing editToken without touching the payload", async () => {
+        const { id, auth } = await createBlob("v1");
+        expect((await putBlob(id, "v2", "Bearer nope")).status).toBe(401);
+        expect((await putBlob(id, "v2", null)).status).toBe(401);
+        // The admin secret is not an owner token either.
+        expect((await putBlob(id, "v2", ADMIN)).status).toBe(401);
+        await expect((await app.request(`/api/v1/blobs/${id}`, {}, env)).json()).resolves.toMatchObject({ payload: "v1" });
+        expect((await putBlob(id, "v2", auth)).status).toBe(200);
+    });
+
+    it("404s an unknown id", async () => {
+        expect((await putBlob("doesnotexist", "x", "Bearer whatever")).status).toBe(404);
+    });
+
+    // A link is admin-only redirect capability; the anonymous owner path must not be
+    // able to reach one, or even confirm that one lives at that id.
+    it("404s a link, and the link still redirects afterwards", async () => {
+        const { id } = await (await postLink({ url: "https://example.com/keep" })).json<{ id: string; }>();
+
+        expect((await putBlob(id, "https://phishing.example/", ADMIN)).status).toBe(404);
+        expect((await putBlob(id, "https://phishing.example/", "Bearer whatever")).status).toBe(404);
+
+        const res = await app.request(`/${id}`, {}, env);
+        expect(res.status).toBe(302);
+        expect(res.headers.get("location")).toBe("https://example.com/keep");
+    });
+
+    it("rejects an empty or oversized payload after auth", async () => {
+        const { id, auth } = await createBlob("v1");
+        expect((await putBlob(id, "", auth)).status).toBe(400);
+        expect((await putBlob(id, "x".repeat(64_001), auth)).status).toBe(413);
+        await expect((await app.request(`/api/v1/blobs/${id}`, {}, env)).json()).resolves.toMatchObject({ payload: "v1" });
+    });
+
+    it("restarts the TTL from now and clamps a caller-supplied ttl", async () => {
+        const { id, auth } = await createBlob("v1");
+        const short = await (await putBlob(id, "v2", auth, "?ttl=1")).json<{ ttl: number; }>();
+        expect(short.ttl).toBe(60);
+
+        const long = await (await putBlob(id, "v3", auth, `?ttl=${365 * 86400}`)).json<{ updatedAt: number; expiresAt: number; }>();
+        expect(long.expiresAt - long.updatedAt).toBe(365 * 86400 * 1000);
+    });
+});
+
+describe("DELETE /api/v1/blobs/:id", () => {
+    it("rejects a wrong or missing editToken", async () => {
+        const { id } = await createBlob("keep");
+        expect((await deleteBlob(id, "Bearer nope")).status).toBe(401);
+        expect((await deleteBlob(id, null)).status).toBe(401);
+        expect((await app.request(`/api/v1/blobs/${id}`, {}, env)).status).toBe(200);
+    });
+
+    it("makes the blob unreadable on both read paths", async () => {
+        const { id, auth } = await createBlob("revoke-me");
+        expect((await deleteBlob(id, auth)).status).toBe(204);
+        expect((await app.request(`/api/v1/blobs/${id}`, {}, env)).status).toBe(404);
+        expect((await app.request(`/${id}`, {}, env)).status).toBe(404);
+    });
+
+    it("404s a link, and the link still redirects afterwards", async () => {
+        const { id } = await (await postLink({ url: "https://example.com/keep" })).json<{ id: string; }>();
+        expect((await deleteBlob(id, ADMIN)).status).toBe(404);
+        expect((await app.request(`/${id}`, {}, env)).status).toBe(302);
+    });
+});
+
+describe("CORS", () => {
+    it("preflights PUT and DELETE with an Authorization header for an allowed origin", async () => {
+        const res = await app.request("/api/v1/blobs/abc12345", {
+            method: "OPTIONS",
+            headers: {
+                "Origin": "http://localhost:8045",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        }, env);
+
+        expect(res.status).toBe(204);
+        expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8045");
+        const methods = res.headers.get("access-control-allow-methods") ?? "";
+        expect(methods).toContain("PUT");
+        expect(methods).toContain("DELETE");
+        expect(res.headers.get("access-control-allow-headers") ?? "").toMatch(/authorization/i);
     });
 });

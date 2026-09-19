@@ -1,5 +1,8 @@
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
+import type {
+    Context,
+    MiddlewareHandler,
+} from "hono";
 import { cors } from "hono/cors";
 import { clientIp } from "./lib/client-ip";
 import {
@@ -54,10 +57,12 @@ app.use("*", async (c, next) => {
     const allowed = c.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()).filter(Boolean);
     return cors({
         origin: origin => allowed.includes(origin) ? origin : null,
-        // Content-Type is deliberately the only one a browser needs: uploads are
-        // text/plain so they stay CORS-simple and skip the preflight round trip.
-        allowHeaders: ["Content-Type", "CF-Turnstile-Token"],
-        allowMethods: ["GET", "POST", "OPTIONS"],
+        // POST stays CORS-simple (text/plain, no Authorization) so the request between
+        // tapping "share" and seeing a link skips the preflight. PUT and DELETE carry
+        // a bearer editToken and therefore do preflight — acceptable, because updating
+        // or revoking a link is never on that first-share path.
+        allowHeaders: ["Content-Type", "CF-Turnstile-Token", "Authorization"],
+        allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         maxAge: 86400,
         // Hono infers the Input generic of a wildcard `use` handler as `any`, so the
         // context we hand back to cors()'s own middleware signature reads as unsafe.
@@ -105,10 +110,13 @@ async function secretMatches(provided: string, expected: string): Promise<boolea
     return constantTimeEqual(a, b);
 }
 
-const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+function bearerToken(c: Context<AppEnv>): string {
     const auth = c.req.header("Authorization") ?? "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    if (!await secretMatches(token, c.env.ADMIN_SECRET)) {
+    return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+}
+
+const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (!await secretMatches(bearerToken(c), c.env.ADMIN_SECRET)) {
         return c.json({ error: "Unauthorized" }, 401);
     }
     await next();
@@ -134,6 +142,24 @@ async function readRecord(store: EntryStore, id: string | undefined): Promise<En
 function publicRecord(record: EntryRecord) {
     const { ownerToken: _ownerToken, ...rest } = record;
     return rest;
+}
+
+/**
+ * Resolve the blob a bearer editToken may update or revoke, or the error response
+ * to send instead. A `link` reads as 404 rather than 401 or 403: the kind split is
+ * the open-redirect defence, so the owner path must not even confirm a link exists
+ * at that id. No Turnstile here — the editToken is already something only the
+ * creator holds, and the WAF rate limit covers the brute-force volume.
+ */
+async function authorizeOwner(c: Context<AppEnv>): Promise<EntryRecord | Response> {
+    const record = await readRecord(c.get("store"), c.req.param("id"));
+    if (!record || record.kind !== "blob") {
+        return c.json({ error: "Not found or expired" }, 404);
+    }
+    if (!await secretMatches(bearerToken(c), record.ownerToken ?? "")) {
+        return c.json({ error: "Unauthorized" }, 401);
+    }
+    return record;
 }
 
 function clampTtl(raw: unknown, fallback: number): number {
@@ -212,8 +238,42 @@ app.get("/api/v1/blobs/:id", async c => {
     return c.json(publicRecord(record));
 });
 
-// Reserved so adding updatable links later does not change the API shape.
-app.put("/api/v1/blobs/:id", c => c.json({ error: "Updating an entry is not implemented yet" }, 501));
+// Re-upload under the same id, so a printed QR code keeps pointing at the newest
+// version. The client re-encrypts with the key already in that QR and a fresh IV;
+// hop still only ever sees ciphertext. The TTL restarts from now rather than
+// continuing the old countdown — an update is the creator saying the link is alive.
+app.put("/api/v1/blobs/:id", async c => {
+    const owned = await authorizeOwner(c);
+    if (owned instanceof Response) return owned;
+
+    const payload = await c.req.text();
+    if (!payload) return c.json({ error: "Empty payload" }, 400);
+    if (payload.length > MAX_PAYLOAD_CHARS) {
+        return c.json({ error: `Payload exceeds ${MAX_PAYLOAD_CHARS} characters` }, 413);
+    }
+
+    const ttl = clampTtl(Number(c.req.query("ttl")), DEFAULT_BLOB_TTL);
+    const now = Date.now();
+    // A plain put, not claimKey: the id is already ours, and claimKey exists to keep a
+    // *new* id from landing on someone else's record.
+    const record: EntryRecord = { ...owned, payload, updatedAt: now, expiresAt: now + ttl * 1000 };
+    await c.get("store").put(entryKey(record.id), JSON.stringify(record), ttl);
+
+    return c.json({
+        id: record.id,
+        createdAt: record.createdAt,
+        updatedAt: now,
+        expiresAt: record.expiresAt,
+        ttl,
+    });
+});
+
+app.delete("/api/v1/blobs/:id", async c => {
+    const owned = await authorizeOwner(c);
+    if (owned instanceof Response) return owned;
+    await c.get("store").delete(entryKey(owned.id));
+    return c.body(null, 204);
+});
 
 app.post("/api/v1/links", requireAdmin, async c => {
     let body: { url?: unknown; ttl?: unknown; meta?: unknown; };

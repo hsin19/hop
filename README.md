@@ -30,17 +30,23 @@ fragment of the share link, which browsers do not send in requests. A log line
 holding both an id and its key would be a plaintext payload, so nothing here should
 ever accept, log, or store a key.
 
+Updating a blob keeps that property: the client re-encrypts with the **same key**
+already printed in the QR code and a **fresh IV**, then `PUT`s the new ciphertext
+with the `editToken` it received on creation. hop verifies the token and swaps the
+payload; the key never comes along.
+
 ## API
 
-| Method   | Path                  | Auth                  | Notes                                                                                                                                                |
-| -------- | --------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/health`             | —                     | `{ status, service, time }`                                                                                                                          |
-| `POST`   | `/api/v1/blobs`       | Turnstile (optional)  | Body is the payload as `text/plain`. 64,000 char cap, default TTL 90 days, `?ttl=<seconds>` to override. Returns `{ id, editToken, expiresAt, ttl }` |
-| `GET`    | `/api/v1/blobs/:id`   | —                     | The record, minus `ownerToken`                                                                                                                       |
-| `PUT`    | `/api/v1/blobs/:id`   | —                     | Reserved for updatable links; currently `501`                                                                                                        |
-| `POST`   | `/api/v1/links`       | `Bearer ADMIN_SECRET` | `{ url, ttl?, meta? }`. `url` must be `http(s)`                                                                                                      |
-| `DELETE` | `/api/v1/entries/:id` | `Bearer ADMIN_SECRET` | Revoke an entry                                                                                                                                      |
-| `GET`    | `/:code`              | —                     | `302` for a link; the JSON record for a blob                                                                                                         |
+| Method   | Path                  | Auth                  | Notes                                                                                                                                                                                                                 |
+| -------- | --------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/health`             | —                     | `{ status, service, time }`                                                                                                                                                                                           |
+| `POST`   | `/api/v1/blobs`       | Turnstile (optional)  | Body is the payload as `text/plain`. 64,000 char cap, default TTL 90 days, `?ttl=<seconds>` to override. Returns `{ id, editToken, expiresAt, ttl }`                                                                  |
+| `GET`    | `/api/v1/blobs/:id`   | —                     | The record, minus `ownerToken`                                                                                                                                                                                        |
+| `PUT`    | `/api/v1/blobs/:id`   | `Bearer editToken`    | Re-upload under the same id: body is the new payload as `text/plain`, same 64,000 char cap, TTL restarts from now (`?ttl=` as for POST). Returns `{ id, createdAt, updatedAt, expiresAt, ttl }`. A `link` id is `404` |
+| `DELETE` | `/api/v1/blobs/:id`   | `Bearer editToken`    | Revoke a blob. A `link` id is `404`                                                                                                                                                                                   |
+| `POST`   | `/api/v1/links`       | `Bearer ADMIN_SECRET` | `{ url, ttl?, meta? }`. `url` must be `http(s)`                                                                                                                                                                       |
+| `DELETE` | `/api/v1/entries/:id` | `Bearer ADMIN_SECRET` | Revoke an entry                                                                                                                                                                                                       |
+| `GET`    | `/:code`              | —                     | `302` for a link; the JSON record for a blob                                                                                                                                                                          |
 
 Uploads are `text/plain` on purpose: it keeps them CORS-simple, so a browser skips
 the preflight `OPTIONS` — one fewer mobile round trip on the request sitting between
@@ -86,7 +92,9 @@ One-time, per environment:
 3. Bind the custom domain: Workers → Settings → Domains & Routes → `hop.hsin19.com`.
 4. Add a WAF rate-limiting rule — this, not Turnstile, is the first line of defence
    for the anonymous write path:
-   - Expression: `http.request.uri.path eq "/api/v1/blobs" and http.request.method eq "POST"`
+   - Expression: `starts_with(http.request.uri.path, "/api/v1/blobs") and http.request.method in {"POST" "PUT" "DELETE"}`
+     — the owner endpoints are in it too, so guessing an `editToken` is bounded by
+     the same budget as spamming uploads.
    - Limit: 10 requests per minute per IP
 5. Repo settings → Secrets and variables:
    - **Actions**: `secrets.CLOUDFLARE_API_TOKEN`, `secrets.ADMIN_SECRET`,
