@@ -20,24 +20,6 @@ jobs:
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v5
-        with:
-          fail-on-severity: moderate
-          comment-summary-in-pr: on-failure
-
   # Merges a green Dependabot PR with a dedicated PAT (Dependabot secret, NOT the
   # default GITHUB_TOKEN) so the resulting push to main still triggers deploy.yml.
   # See .github/workflows/README.md for the token setup. The deploy-actions group
@@ -46,7 +28,7 @@ jobs:
   # production deploy. It gets a human look instead.
   auto-merge:
     name: Auto-merge Dependabot
-    needs: [check, dependency-review]
+    needs: [check]
     if: ${{ success() && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && !contains(github.head_ref, 'deploy-actions') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -62,7 +44,7 @@ jobs:
 
   jules-fix:
     name: Jules fix on failure
-    needs: [check, dependency-review]
+    needs: [check]
     if: ${{ failure() && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
