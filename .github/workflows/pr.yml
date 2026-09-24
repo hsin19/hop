@@ -1,9 +1,9 @@
 name: Pull Request
 
 # Everything a PR gets: the shared gate in check.yml, plus the policy that only
-# makes sense on a PR -- dependency review, and the Dependabot auto-merge /
-# auto-repair pair. Not named `ci.yml` because CI is not what distinguishes it:
-# deploy.yml calls the same gate. The trigger is what distinguishes it.
+# makes sense on a PR -- dependency review and the Dependabot auto-merge. Not
+# named `ci.yml` because CI is not what distinguishes it: deploy.yml calls the
+# same gate. The trigger is what distinguishes it.
 on:
   pull_request:
 
