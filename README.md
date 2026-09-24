@@ -100,9 +100,8 @@ One-time, per environment:
    - **Actions**: `secrets.CLOUDFLARE_API_TOKEN`, `secrets.ADMIN_SECRET`,
      `secrets.CODECOV_TOKEN`, and `vars.CLOUDFLARE_ACCOUNT_ID` (an account id is
      not a secret, matching the other repos here).
-   - **Dependabot**: `AUTOMERGE_TOKEN`, and `JULES_API_KEY` if the auto-repair job
-     is wanted. These must live in the Dependabot store, not Actions — a
-     Dependabot-triggered run sees only that one. See
+   - **Dependabot**: `AUTOMERGE_TOKEN`. It must live in the Dependabot store, not
+     Actions — a Dependabot-triggered run sees only that one. See
      [`.github/workflows/README.md`](.github/workflows/README.md).
 
 `TURNSTILE_SECRET` is deliberately unset. `verifyTurnstile` waves requests through

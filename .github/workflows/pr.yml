@@ -59,36 +59,3 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
-
-  jules-fix:
-    name: Jules fix on failure
-    needs: [check, dependency-review]
-    if: ${{ failure() && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-      pull-requests: write
-
-    steps:
-      - name: Invoke Jules
-        uses: google-labs-code/jules-action@v1.0.0
-        with:
-          jules_api_key: ${{ secrets.JULES_API_KEY }}
-          starting_branch: ${{ github.head_ref }}
-          include_last_commit: true
-          prompt: |
-            A Dependabot dependency update on branch `${{ github.head_ref }}` is failing the PR checks (${{ github.event.pull_request.html_url }}).
-
-            This is a single-package pnpm project: a Cloudflare Workers service written in TypeScript with Hono, tested with Vitest through `@cloudflare/vitest-pool-workers`. There is no frontend and no browser test layer. Read `README.md` for context. Run all commands from the repo root.
-
-            Please:
-            1. Run `pnpm install --frozen-lockfile`, then `pnpm run check` (format, lint, typecheck, vitest, `wrangler deploy --dry-run`) to reproduce the failure.
-            2. Make the change needed to make the checks pass, scoped to the dependency update. Editing `package.json` and `pnpm-lock.yaml` to align dependency versions IS the expected fix and is explicitly IN SCOPE — including dev/test dependencies and transitive peers. This is NOT "unrelated code". "Unrelated code" / "do not touch" refers to application source logic and runtime behavior — do NOT change those.
-            3. Common causes, all in scope to fix:
-               - A package bumped without its peers — e.g. `vitest` updated but `@vitest/coverage-istanbul` / `@cloudflare/vitest-pool-workers` left behind, which pin narrow peer ranges on `vitest` and `@vitest/runner`. Bump the peers to the matching version.
-               - An ESLint-side skew — `eslint`, `typescript-eslint` and `@eslint/js` must agree. Note `typescript-eslint` declares `typescript` as a peer with an upper bound and REFUSES to load outside it; if TypeScript was bumped past that bound, the correct fix is to hold TypeScript back, not to loosen the lint config.
-               - A version skew in `pnpm-lock.yaml` where one package resolves to two versions. Align them (bump in `package.json` and/or `pnpm dedupe`).
-               In all cases, run `pnpm install` (without `--frozen-lockfile`) to update `pnpm-lock.yaml` to match.
-            4. Source-code edits ARE in scope when a dependency changed its API and call sites must be adapted to keep the SAME behavior — e.g. a renamed export, changed function signature, or moved import path. That mechanical, behavior-preserving migration is expected. What stays OUT of scope: changing what the service does, altering the blob/link security split in `src/types.ts`, weakening the `EntryStore` abstraction in `src/lib/store.ts`, refactoring beyond the migration, or guessing at intent. If the migration is non-trivial/ambiguous, do NOT force it — leave a PR comment describing what is blocking instead.
-            5. Before opening the PR, run `pnpm run check` once more and confirm it passes. You start from branch `${{ github.head_ref }}` (the Dependabot branch), so your work already includes the dependency bump plus your fix. Open a pull request with that combined change. Give it a clear title and a description that states the root cause of the failure and what you changed to fix it, and link the original Dependabot PR (${{ github.event.pull_request.html_url }}).

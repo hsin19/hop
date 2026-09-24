@@ -50,9 +50,8 @@ jobs:
 
       # One step per check rather than one chained command: a single step could only
       # say "something failed", while the red step here names it. `!cancelled()` so
-      # a single run reports ALL the failures instead of stopping at the first --
-      # the jules-fix job repairing a Dependabot PR needs the whole picture, not one
-      # symptom per round. Gated on the install too, or a bad lockfile (a common
+      # a single run reports ALL the failures instead of stopping at the first.
+      # Gated on the install too, or a bad lockfile (a common
       # Dependabot failure) reds every step below it for want of node_modules and
       # buries the one real cause.
       - name: Format

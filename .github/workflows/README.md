@@ -6,7 +6,7 @@
 check.yml   workflow_call → check: format · lint · typecheck · unit tests
                                    · build (dry-run) → Codecov upload
 pr.yml      pull_request  → check.yml · dependency-review
-                          → auto-merge (Dependabot) | jules-fix (on failure)
+                          → auto-merge (Dependabot)
 deploy.yml  push to main  → check.yml → deploy to Cloudflare Workers → smoke check
 ```
 
@@ -45,6 +45,13 @@ deploy instead. Afterwards the `/health` endpoint is probed with retries, which 
 what `test/index.spec.ts`'s "reports the service name" test exists to keep
 assertable.
 
+## Dependency review
+
+`pr.yml`'s `dependency-review` job fails every PR with "Dependency review is not
+supported on this repository" until the **Dependency graph** is on — enable
+Dependabot alerts (Settings → Advanced Security), which switches it on too. It
+also gates `auto-merge`, so with the graph off no Dependabot PR ever merges.
+
 ## Dependabot auto-merge → deploy
 
 `pr.yml` merges a green Dependabot PR using `secrets.AUTOMERGE_TOKEN` (a dedicated
@@ -52,7 +59,7 @@ token, **not** the default `GITHUB_TOKEN`) so the resulting push to `main`
 triggers `deploy.yml`. A push made with `GITHUB_TOKEN` would not — GitHub never
 lets a `GITHUB_TOKEN` push start another workflow.
 
-> `AUTOMERGE_TOKEN` and `JULES_API_KEY` must live in **Dependabot** secrets
+> `AUTOMERGE_TOKEN` must live in **Dependabot** secrets
 > (Settings → Secrets and variables → Dependabot), not Actions secrets —
 > Dependabot-triggered runs only see the Dependabot secret store.
 
@@ -61,19 +68,15 @@ lets a `GITHUB_TOKEN` push start another workflow.
 PAT with `repo` scope). A PAT already used by show-me-way or InTheGreenYet can be
 reused only if its repository access list includes this repo. Fine-grained PATs
 expire (max 1 year) — an expired token makes auto-merge silently stop merging
-while CI stays green, so track the expiry date.
+while CI stays green, so track the expiry date. A red Dependabot PR (typically
+peer-dependency skew — `@cloudflare/vitest-pool-workers` pins narrow ranges on
+`vitest` and `@vitest/runner`, and `typescript-eslint` refuses to load outside its
+`typescript` peer range) is left for a human; there is no auto-repair job.
 
 The `deploy-actions` group in `dependabot.yml` is excluded from auto-merge.
 `cloudflare/wrangler-action` only ever runs on a push to `main`, so a green PR
 proves nothing about it and a bad bump would land straight in the production
 deploy — it gets a human look instead.
-
-The `jules-fix` job asks Google Jules to repair a failing Dependabot PR (typically
-peer-dependency skew — `@cloudflare/vitest-pool-workers` pins narrow ranges on
-`vitest` and `@vitest/runner`, and `typescript-eslint` refuses to load outside its
-`typescript` peer range). It needs `JULES_API_KEY` in Dependabot secrets; without
-it the job fails, which is harmless but noisy — delete the job if Jules is not
-wanted here.
 
 ## Coverage → Codecov
 
@@ -87,7 +90,7 @@ reports through `pr.yml`, and the `main` baseline those are diffed against is th
 upload from `deploy.yml`'s call — the only run of the suite on the default branch.
 
 > `CODECOV_TOKEN` is an **Actions** secret (Settings → Secrets and variables →
-> Actions) — unlike the two above. A Dependabot PR therefore cannot read it, so
+> Actions) — unlike `AUTOMERGE_TOKEN`. A Dependabot PR therefore cannot read it, so
 > the upload no-ops there; `fail_ci_if_error: false` on both steps is what keeps
 > that from failing an otherwise green bump.
 
