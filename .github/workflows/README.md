@@ -73,6 +73,11 @@ peer-dependency skew — `@cloudflare/vitest-pool-workers` pins narrow ranges on
 `vitest` and `@vitest/runner`, and `typescript-eslint` refuses to load outside its
 `typescript` peer range) is left for a human; there is no auto-repair job.
 
+A green PR merges only if `main` has not moved since its check ran; otherwise the
+job comments `@dependabot rebase` and the rebased PR goes through the gate again.
+Merging anyway would land a tree no check saw — two bumps of one transitive
+package can merge as clean text into a broken lockfile.
+
 The `deploy-actions` group in `dependabot.yml` is excluded from auto-merge.
 `cloudflare/wrangler-action` only ever runs on a push to `main`, so a green PR
 proves nothing about it and a bad bump would land straight in the production

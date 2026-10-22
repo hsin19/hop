@@ -53,9 +53,22 @@ jobs:
     permissions: {}
 
     steps:
-      - name: Squash-merge the PR
-        run: gh pr merge --squash --delete-branch --match-head-commit "$HEAD_SHA" "$PR_URL"
+      # The check ran on this PR merged into main as main stood when the run began:
+      # GITHUB_SHA is that test merge, and its first parent is that main. If main has
+      # moved since, the squash would land a tree no check saw -- two bumps of the
+      # same transitive package can merge as clean text into a lockfile with
+      # duplicate keys. Dependabot rebases instead, and its push re-runs this gate.
+      - name: Squash-merge the PR, or have Dependabot rebase it onto main
+        run: |
+          tested_base=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.parents[0].sha')
+          main=$(gh api "repos/$GITHUB_REPOSITORY/commits/$BASE_REF" --jq .sha)
+          if [ "$tested_base" != "$main" ]; then
+            gh pr comment "$PR_URL" --body "@dependabot rebase"
+            exit 0
+          fi
+          gh pr merge --squash --delete-branch --match-head-commit "$HEAD_SHA" "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
