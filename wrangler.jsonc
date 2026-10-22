@@ -5,7 +5,15 @@
   "compatibility_date": "2026-08-01",
   // No nodejs_compat: Hono and nanoid v5 are pure Web Standard APIs. Adding the
   // compat layer only costs bundle size and cold-start time here.
-  "observability": { "enabled": true },
+  "observability": {
+    "enabled": true,
+    // Also exported over OTLP to Grafana Cloud. The destinations are account-level
+    // (Cloudflare dashboard > Observability > Destinations) and hold the Grafana
+    // token; deploy does not check they exist, so a missing one just means no
+    // export. persist keeps Cloudflare's own copy for the dashboard and `wrangler tail`.
+    "logs": { "enabled": true, "destinations": ["grafana-logs"], "persist": true },
+    "traces": { "enabled": true, "destinations": ["grafana-traces"], "persist": true }
+  },
   "upload_source_maps": true,
   "routes": [
     { "pattern": "hop.hsin19.com", "custom_domain": true }
