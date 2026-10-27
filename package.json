@@ -29,7 +29,7 @@
     "@cloudflare/vitest-pool-workers": "^0.23.0",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.5",
-    "@vitest/coverage-istanbul": "~4.1.11",
+    "@vitest/coverage-istanbul": "~5.0.5",
     "dprint": "^0.64.0",
     "eslint": "^10.13.0",
     "globals": "^17.13.0",
@@ -37,7 +37,7 @@
     "simple-git-hooks": "^2.14.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.2",
-    "vitest": "~4.1.11",
+    "vitest": "~5.0.5",
     "wrangler": "^4.151.1"
   },
   "simple-git-hooks": {
