@@ -54,7 +54,7 @@ updates:
         exclude-patterns:
           - 'cloudflare/wrangler-action'
       # wrangler-action 只在 push main 的 deploy job 執行，PR 檢查永遠跑不到它，
-      # 升級等於未經驗證直上生產部署——獨立成組，ci.yml 依組名跳過 auto-merge。
-      deploy-actions:
+      # 升級等於未經驗證直上生產部署——獨立成組；組名以 -manual 結尾，auto-merge 會跳過它。
+      deploy-actions-manual:
         patterns:
           - 'cloudflare/wrangler-action'
