@@ -38,7 +38,7 @@
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
     "vitest": "~4.1.11",
-    "wrangler": "^4.152.0"
+    "wrangler": "^4.156.1"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged"
