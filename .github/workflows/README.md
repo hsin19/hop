@@ -74,9 +74,9 @@ while CI stays green. A PAT already used by show-me-way or InTheGreenYet can be 
 only if its repository access list includes this repo.
 
 A red Dependabot PR (typically peer-dependency skew —
-`@cloudflare/vitest-pool-workers` pins narrow ranges on `vitest` and
-`@vitest/runner`, and `typescript-eslint` refuses to load outside its
-`typescript` peer range) is left for a human; there is no auto-repair job.
+`@cloudflare/vitest-plugin` only runs the `vitest` majors its peer range
+names, and `typescript-eslint` refuses to load outside its `typescript` peer
+range) is left for a human; there is no auto-repair job.
 
 The `deploy-actions-manual` group in `dependabot.yml` is not auto-merged — the
 shared workflow skips every group whose name ends in `-manual`.
