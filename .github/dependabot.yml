@@ -7,7 +7,7 @@ updates:
     cooldown:
       default-days: 7
     ignore:
-      # 專案使用 Node 24（LTS），@types/node 跟隨同一個 major，不升到非 LTS 的 25.x
+      # @types/node 的 major 跟著 .node-version（目前 Node 26 LTS），升 Node 時一起手動升
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
       # typescript-eslint 目前 peer 是 `>=4.8.4 <6.1.0`，載入 TS 7 會直接拋錯讓
